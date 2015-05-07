@@ -9,8 +9,8 @@
     <version>0.1</version>
 
     <properties>
-        <cdh.version>cdh5.3.1</cdh.version>
-        <hbase.version>0.98.6-${cdh.version}</hbase.version>
+        <cdh.version>cdh5.4.0</cdh.version>
+        <hbase.version>1.0.0-${cdh.version}</hbase.version>
         <!-- joda version provided by this CDH -->
         <joda.version>1.6</joda.version>
     </properties>

@@ -2,8 +2,10 @@ package eu.unicredit.hbase.observer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import org.apache.hadoop.hbase.*;
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellScanner;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
@@ -40,32 +42,33 @@ public class TableHistory extends BaseRegionObserver {
         char suffix = 'P';
 
         RegionCoprocessorEnvironment env = e.getEnvironment();
-        String thisTableName = Bytes.toString(env.getRegion().getTableDesc().getName());
+        String thisTableName = Bytes.toString(env.getRegion().getTableDesc().getTableName().getName());
+        Table historyTable = env.getTable(TableName.valueOf(String.format("%s_s", thisTableName)));
 
-        HTableInterface historyTable = env.getTable(TableName.valueOf(String.format("%s_s", thisTableName)));
+        try {
+            byte[] row = put.getRow();
 
-        byte[] row = put.getRow();
+            CellScanner scanner = put.cellScanner();
+            while (scanner.advance()) {
+                Cell cell = scanner.current();
 
-        CellScanner scanner = put.cellScanner();
-        while (scanner.advance()) {
-            Cell cell = scanner.current();
+                long timestamp = cell.getTimestamp();
+                byte[] columnFamily = CellUtil.cloneFamily(cell);
+                byte[] qualifier = CellUtil.cloneQualifier(cell);
+                byte[] value = CellUtil.cloneValue(cell);
 
-            long timestamp = cell.getTimestamp();
-            byte[] columnFamily = CellUtil.cloneFamily(cell);
-            byte[] qualifier = CellUtil.cloneQualifier(cell);
-            byte[] value = CellUtil.cloneValue(cell);
+                byte[] historyRow = createHistoryRow(row, timestamp, suffix);
 
-            byte[] historyRow = createHistoryRow(row, timestamp, suffix);
+                Put historyPut = new Put(historyRow);
+                historyPut.addColumn(columnFamily, qualifier, timestamp, value);
 
-            Put historyPut = new Put(historyRow);
-            historyPut.add(columnFamily, qualifier, timestamp, value);
+                LOG.trace(String.format("%s %s %s:%s %s", suffix, Bytes.toString(row), Bytes.toString(columnFamily), Bytes.toString(qualifier), Bytes.toString(value)));
 
-            LOG.info(String.format("%s %s %s:%s %s", suffix, Bytes.toString(row), Bytes.toString(columnFamily), Bytes.toString(qualifier), Bytes.toString(value)));
-
-            historyTable.put(historyPut);
+                historyTable.put(historyPut);
+            }
+        } finally {
+            historyTable.close();
         }
-
-        historyTable.close();
     }
 
     @Override
@@ -74,37 +77,39 @@ public class TableHistory extends BaseRegionObserver {
         char suffix = 'D';
 
         RegionCoprocessorEnvironment env = e.getEnvironment();
-        String thisTableName = Bytes.toString(env.getRegion().getTableDesc().getName());
+        String thisTableName = Bytes.toString(env.getRegion().getTableDesc().getTableName().getName());
+        Table thisTable = env.getTable(TableName.valueOf(thisTableName));
+        Table historyTable = env.getTable(TableName.valueOf(String.format("%s_s", thisTableName)));
 
-        HTableInterface historyTable = env.getTable(TableName.valueOf(String.format("%s_s", thisTableName)));
-        HTableInterface thisTable = env.getTable(TableName.valueOf(thisTableName));
+        try {
+            byte[] row = delete.getRow();
 
-        byte[] row = delete.getRow();
+            CellScanner scanner = delete.cellScanner();
+            while (scanner.advance()) {
+                Cell cell = scanner.current();
 
-        CellScanner scanner = delete.cellScanner();
-        while (scanner.advance()) {
-            Cell cell = scanner.current();
+                byte[] columnFamily = CellUtil.cloneFamily(cell);
+                byte[] qualifier = CellUtil.cloneQualifier(cell);
 
-            byte[] columnFamily = CellUtil.cloneFamily(cell);
-            byte[] qualifier = CellUtil.cloneQualifier(cell);
+                Get get = new Get(row);
+                get.addColumn(columnFamily, qualifier);
+                if (thisTable.exists(get)) {
+                    long timestamp = (new DateTime()).getMillis();
+                    byte[] value = new byte[0];
 
-            Get get = new Get(row);
-            get.addColumn(columnFamily, qualifier);
-            if (thisTable.exists(get)) {
-                long timestamp = (new DateTime()).getMillis();
-                byte[] value = new byte[0];
+                    byte[] historyRow = createHistoryRow(row, timestamp, suffix);
 
-                byte[] historyRow = createHistoryRow(row, timestamp, suffix);
+                    Put historyPut = new Put(historyRow);
+                    historyPut.addColumn(columnFamily, qualifier, timestamp, value);
 
-                Put historyPut = new Put(historyRow);
-                historyPut.add(columnFamily, qualifier, timestamp, value);
+                    LOG.trace(String.format("%s %s %s:%s", suffix, Bytes.toString(row), Bytes.toString(columnFamily), Bytes.toString(qualifier)));
 
-                LOG.info(String.format("%s %s %s:%s %s", suffix, Bytes.toString(row), Bytes.toString(columnFamily), Bytes.toString(qualifier), Bytes.toString(value)));
-
-                historyTable.put(historyPut);
+                    historyTable.put(historyPut);
+                }
             }
+        } finally {
+            thisTable.close();
+            historyTable.close();
         }
-
-        historyTable.close();
     }
 }
